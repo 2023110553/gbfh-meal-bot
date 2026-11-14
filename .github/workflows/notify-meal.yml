@@ -1,0 +1,24 @@
+name: Meal notifications
+on:
+    - cron: '0 22 * * *'
+    - cron: '0 2 * * *'
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      meal:
+        description: Meal to send now (Korean date)
+        type: choice
+        options:
+          - breakfast
+          - lunch
+          - dinner
+permissions:
+  contents: read
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node notify-meal.mjs
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
