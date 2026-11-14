@@ -1,0 +1,40 @@
+name: Test GBFH Website
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-website:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test cafeteria website access
+        shell: bash
+        run: |
+          URL="https://www.gbfh.co.kr/0206/cafeteria/menu/w2/?symd=20261114"
+
+          set +e
+          HTTP_CODE=$(curl -L -sS \
+            --connect-timeout 10 \
+            --max-time 35 \
+            -o response.html \
+            -w '%{http_code}' "$URL")
+          CURL_EXIT=$?
+          set -e
+
+          echo "curl_exit: $CURL_EXIT"
+          echo "HTTP status: $HTTP_CODE"
+
+          if [ -f response.html ]; then
+            echo "HTML bytes: $(wc -c < response.html)"
+
+            if grep -q "food-info-box" response.html; then
+              echo "Food table: FOUND"
+            else
+              echo "Food table: NOT FOUND"
+            fi
+          fi
+
+          if [ "$CURL_EXIT" -ne 0 ] || [ "$HTTP_CODE" != "200" ]; then
+            exit 1
+          fi
