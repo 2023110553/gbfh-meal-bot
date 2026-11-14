@@ -1,5 +1,8 @@
 name: Meal notifications
+
 on:
+  schedule:
+    # GitHub Actions cron uses UTC (22:00/02:00/08:00 UTC = 07:00/11:00/17:00 KST).
     - cron: '0 22 * * *'
     - cron: '0 2 * * *'
     - cron: '0 8 * * *'
@@ -7,18 +10,38 @@ on:
     inputs:
       meal:
         description: Meal to send now (Korean date)
+        required: true
         type: choice
+        default: dinner
         options:
           - breakfast
           - lunch
           - dinner
+
 permissions:
   contents: read
+
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: node notify-meal.mjs
+      - name: Send selected meal notification
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          CHOSEN_MEAL: ${{ inputs.meal }}
+        shell: bash
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            meal="$CHOSEN_MEAL"
+          else
+            case "$SCHEDULE" in
+              '0 22 * * *') meal=breakfast ;;
+              '0 2 * * *')  meal=lunch ;;
+              '0 8 * * *')  meal=dinner ;;
+              *) echo "Unknown scheduled trigger: $SCHEDULE"; exit 1 ;;
+            esac
+          fi
+          MEAL="$meal" node notify-meal.mjs
