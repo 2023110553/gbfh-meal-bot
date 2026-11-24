@@ -1,13 +1,16 @@
-# 기숙사 식단 챗봇
+# 경기푸른미래관 식단 자동 알림
 
-Vercel Serverless Function을 서울 리전(`icn1`)에서 실행해 주간 식단을 조회합니다.
+Windows PC가 식단을 수집해 GitHub JSON을 갱신하고 ntfy로 Android·iOS에 메뉴를 알립니다. PC가 꺼져 있어도 저장된 날짜의 메뉴를 보낼 수 있습니다.
 
-## API
-- `/api/test?symd=20261114`: 원본 접속 진단 (실행 리전 포함)
-- `/api/meal?symd=20261114`: 일~토 식단 JSON
-- `/api/meal?symd=20261114&format=kakao`: 카카오 i 오픈빌더 스킬 응답 형식
+GitHub Actions 예약은 유지됩니다. 15분 이상 늦은 작업은 건너뜁니다. Cloudflare 전환용 코드를 추가했으며 계정 배포와 수신 검증 후 예약을 전환합니다.
 
-조회 기준일은 `symd=YYYYMMDD`입니다. Kakao 오픈빌더에서 스킬 URL로 `/api/meal?format=kakao`를 설정하면 됩니다. 카카오에서 POST 요청을 보내는 경우에도 쿼리의 `format=kakao`는 유지됩니다.
+[설치 및 운영](PUSH-NOTIFICATIONS.md) · [조사 및 검증 결과](STABILIZATION.md)
 
-## 배포
-GitHub main에 연결된 Vercel 프로젝트가 자동 배포됩니다. 프로젝트는 Hobby 범위와 서울 리전을 사용합니다. 실제 접속 성공 여부는 배포 후 `/api/test`의 `status`, `hasFoodTable`, `region`으로 확인하세요.
+- 수집 collect-meals.ps1
+- 업로드 sync-meals.ps1
+- Windows 예약 install-schedule.ps1
+- Windows 진단 diagnose-schedule.ps1
+- Cloudflare 발송 worker/index.mjs
+- 회귀 검사 npm test
+
+기존 Vercel API는 보존됩니다. 자동 알림은 날짜별 meals.json을 사용합니다.
