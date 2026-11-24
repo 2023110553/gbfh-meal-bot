@@ -22,7 +22,7 @@ Git for Windows 설치 후 저장소를 clone합니다. Git 사용자 이름과 
 
 SQLite Durable Object로 발송 기록을 직렬 처리합니다. Workers Free 플랜을 유지합니다. 현재 wrangler.jsonc의 crons는 빈 배열이라 배포만으로 예약이 활성화되지 않습니다.
 
-    npm ci
+    npm install
     npx wrangler login
     npx wrangler deploy
     npx wrangler secret put NTFY_TOPIC
