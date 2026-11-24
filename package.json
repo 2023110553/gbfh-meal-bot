@@ -1,0 +1,11 @@
+{
+  "name": "gbfh-meal-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "deploy:worker": "wrangler deploy",
+    "logs:worker": "wrangler tail"
+  },
+  "devDependencies": { "wrangler": "^4.0.0" }
+}
