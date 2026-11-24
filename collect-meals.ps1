@@ -46,10 +46,10 @@ foreach ($offset in $offsets) {
                 lunch = @(Read-Lines $cells[3].Groups[1].Value)
                 dinner = @(Read-Lines $cells[4].Groups[1].Value)
             }
-            if ($item.breakfast.Count + $item.lunch.Count + $item.dinner.Count) {
-                $weekMeals[$day.ToString('yyyy-MM-dd')] = $item
-            }
+            $weekMeals[$day.ToString('yyyy-MM-dd')] = $item
         }
+        $nonempty = @($weekMeals.Values | Where-Object { $_.breakfast.Count + $_.lunch.Count + $_.dinner.Count })
+        if (!$nonempty.Count) { Write-Warning "No registered meals for $week"; continue }
         foreach ($key in $weekMeals.Keys) { $meals[$key] = $weekMeals[$key]; $updated++ }
     } catch { Write-Warning "$($week.ToString('yyyy-MM-dd')): $_" }
 }
