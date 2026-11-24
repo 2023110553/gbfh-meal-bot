@@ -1,0 +1,11 @@
+{
+  "name": "gbfh-meal-scheduler",
+  "main": "worker/index.mjs",
+  "compatibility_date": "2026-11-24",
+  "workers_dev": true,
+  "vars": { "MEALS_URL": "https://raw.githubusercontent.com/2023110553/gbfh-meal-bot/main/meals.json" },
+  "durable_objects": { "bindings": [{ "name": "SENDER", "class_name": "Sender" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sender"] }],
+  "triggers": { "crons": [] },
+  "observability": { "enabled": true }
+}
