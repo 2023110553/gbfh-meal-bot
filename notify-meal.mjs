@@ -1,8 +1,13 @@
+import { plan } from './meal-core.mjs'
 import { readFile } from 'node:fs/promises'
 
 const labels = { breakfast: '아침', lunch: '점심', dinner: '저녁' }
 const meal = process.env.MEAL
 if (!Object.hasOwn(labels, meal)) throw new Error('Select breakfast, lunch or dinner.')
+
+if (process.env.EVENT_NAME === 'schedule' && plan(meal, Date.now(), Date.now()).status !== 'ready') {
+  console.log('Skipped scheduled notification outside the 15-minute window.'); process.exit(0)
+}
 
 const parts = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
