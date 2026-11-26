@@ -77,5 +77,17 @@ test('durable ledger, dry run, missing data, network and uncertain delivery', as
     assert.equal(storageError.status, 500)
     assert.equal((await storageError.json()).stage, 'storage-attempt')
     assert.equal(delivered, before)
+    records.clear(); mode='ok'
+    const probeKey = 'probe/' + date + '/dinner'
+    records.set(probeKey, {status:'rejected',upstreamStatus:429,at:new Date().toISOString(),retryAt:Date.now()+60000,attempts:1})
+    const retry = () => sender.fetch(new Request('https://test', {method:'POST',body:JSON.stringify({meal:'dinner',scheduled:Date.now(),manual:true,probe:true,retryRejected:true})}))
+    const beforeRetry = delivered
+    assert.equal((await (await retry()).json()).status,'duplicate')
+    assert.equal(delivered,beforeRetry)
+    records.get(probeKey).retryAt = Date.now()-1
+    assert.equal((await (await retry()).json()).status,'accepted')
+    assert.equal(records.get(probeKey).previous.status,'rejected')
+    assert.equal(records.get(probeKey).attempts,2)
+    assert.equal((await (await retry()).json()).status,'duplicate')
   } finally { globalThis.fetch=original; delete globalThis.__mealCore }
 })
