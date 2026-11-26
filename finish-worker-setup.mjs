@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 const url = 'https://gbfh-meal-scheduler.2023110553.workers.dev'
 const initialize = process.argv.includes('--init')
 const dryRun = process.argv.includes('--dry-run')
+const inspect = process.argv.includes('--inspect')
 const meal = process.argv.slice(2).find(x => !x.startsWith('--')) ?? 'breakfast'
 if (!['breakfast', 'lunch', 'dinner'].includes(meal)) throw Error('Use breakfast, lunch or dinner.')
 if (process.platform !== 'win32') throw Error('Run this helper on Windows. It uses Windows DPAPI for the local credential.')
@@ -45,13 +46,18 @@ async function call(preview) {
   for (let attempt = 0; attempt < (preview ? 6 : 1); attempt++) {
     const response = await fetch(url, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ meal, dryRun: preview }), signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ meal, dryRun: preview, inspect }), signal: AbortSignal.timeout(30000),
     })
     if (response.status === 401 && preview && attempt < 5) { await new Promise(resolve => setTimeout(resolve, 2000)); continue }
-    if (!response.ok) throw Error(`Worker HTTP ${response.status}. For 401, use --init to re-register the saved token. No token was printed.`)
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}))
+      console.error("WORKER_FAILURE", JSON.stringify({ httpStatus: response.status, stage: detail.stage, upstreamStatus: detail.upstreamStatus, traceId: detail.traceId, message: detail.message }))
+      throw Error("Worker request failed. Inspect the stage and traceId above; no automatic resend was attempted.")
+    }
     return response.json()
   }
 }
+if (inspect) { console.log("DELIVERY_RECORD", JSON.stringify(await call(true))); process.exit(0) }
 const preview = await call(true)
 if (preview.status !== 'preview') throw Error('Unexpected preview response.')
 console.log('DRY_RUN', preview.title, preview.message)
