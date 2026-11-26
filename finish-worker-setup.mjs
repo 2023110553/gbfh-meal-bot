@@ -9,6 +9,7 @@ const url = 'https://gbfh-meal-scheduler.2023110553.workers.dev'
 const initialize = process.argv.includes('--init')
 const dryRun = process.argv.includes('--dry-run')
 const inspect = process.argv.includes('--inspect')
+const diagnose = process.argv.includes('--diagnose')
 const meal = process.argv.slice(2).find(x => !x.startsWith('--')) ?? 'breakfast'
 if (!['breakfast', 'lunch', 'dinner'].includes(meal)) throw Error('Use breakfast, lunch or dinner.')
 if (process.platform !== 'win32') throw Error('Run this helper on Windows. It uses Windows DPAPI for the local credential.')
@@ -42,11 +43,11 @@ if (initialize) {
   if (result.error || result.status !== 0) throw Error('ADMIN_TOKEN registration failed. Retry --init to reuse the same token.')
   console.log('ADMIN_TOKEN registered; encrypted local credential ready.')
 }
-async function call(preview) {
+async function call(preview, inspectRecord = inspect, probe = false) {
   for (let attempt = 0; attempt < (preview ? 6 : 1); attempt++) {
     const response = await fetch(url, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ meal, dryRun: preview, inspect }), signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ meal, dryRun: preview, inspect: inspectRecord, probe }), signal: AbortSignal.timeout(30000),
     })
     if (response.status === 401 && preview && attempt < 5) { await new Promise(resolve => setTimeout(resolve, 2000)); continue }
     if (!response.ok) {
@@ -56,6 +57,16 @@ async function call(preview) {
     }
     return response.json()
   }
+}
+if (diagnose) {
+  console.log("PRODUCTION_RECORD", JSON.stringify(await call(true, true)))
+  const preview = await call(true, false, true)
+  console.log("PROBE_PREVIEW", preview.title, preview.message)
+  const result = await call(false, false, true)
+  console.log("PROBE_RESULT", JSON.stringify(result))
+  if (result.status === "accepted" && (await call(false, false, true)).status !== "duplicate") throw Error("Probe duplicate protection failed")
+  console.log("Production records preserved. Probe is limited to once per date and meal.")
+  process.exit(0)
 }
 if (inspect) { console.log("DELIVERY_RECORD", JSON.stringify(await call(true))); process.exit(0) }
 const preview = await call(true)
