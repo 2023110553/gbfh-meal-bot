@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import { plan, notification } from '../meal-core.mjs'
+import { plan, notification, scheduledMeal } from '../meal-core.mjs'
 
 export class Sender extends DurableObject {
   async fetch(request) {
@@ -39,7 +39,8 @@ export class Sender extends DurableObject {
 }
 export default {
   async scheduled(event, env) {
-    const meal = { '0 22 * * *': 'breakfast', '0 2 * * *': 'lunch', '0 8 * * *': 'dinner' }[event.cron]
+    const meal = scheduledMeal(event.scheduledTime)
+    if (!meal) { console.log('Skipped non-matching meal time'); return }
     const response = await invoke(env, { meal, scheduled: event.scheduledTime })
     console.log(await response.text())
     if (!response.ok) throw Error('Scheduled delivery failed')
