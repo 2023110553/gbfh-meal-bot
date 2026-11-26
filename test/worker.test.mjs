@@ -6,7 +6,7 @@ import * as core from '../meal-core.mjs'
 test('durable ledger, dry run, missing data, network and uncertain delivery', async () => {
   const source = (await readFile(new URL('../worker/index.mjs', import.meta.url), 'utf8'))
     .replace("import { DurableObject } from 'cloudflare:workers'", 'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env } }')
-    .replace("import { plan, notification } from '../meal-core.mjs'", 'const { plan, notification } = globalThis.__mealCore')
+    .replace("import { plan, notification, scheduledMeal } from '../meal-core.mjs'", 'const { plan, notification, scheduledMeal } = globalThis.__mealCore')
   globalThis.__mealCore = core
   const { Sender } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))
   const records = new Map()
