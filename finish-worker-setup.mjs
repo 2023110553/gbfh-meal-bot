@@ -47,12 +47,12 @@ async function call(preview, inspectRecord = inspect, probe = false) {
   for (let attempt = 0; attempt < (preview ? 6 : 1); attempt++) {
     const response = await fetch(url, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ meal, dryRun: preview, inspect: inspectRecord, probe }), signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ meal, dryRun: preview, inspect: inspectRecord, probe, retryRejected: diagnose }), signal: AbortSignal.timeout(30000),
     })
     if (response.status === 401 && preview && attempt < 5) { await new Promise(resolve => setTimeout(resolve, 2000)); continue }
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}))
-      console.error("WORKER_FAILURE", JSON.stringify({ httpStatus: response.status, stage: detail.stage, upstreamStatus: detail.upstreamStatus, traceId: detail.traceId, message: detail.message }))
+      console.error("WORKER_FAILURE", JSON.stringify({ httpStatus: response.status, stage: detail.stage, upstreamStatus: detail.upstreamStatus, traceId: detail.traceId, ntfyCode: detail.ntfyCode, retryAt: detail.retryAt ? new Date(detail.retryAt).toISOString() : undefined, rateLimit: detail.rateLimit, message: detail.message }))
       throw Error("Worker request failed. Inspect the stage and traceId above; no automatic resend was attempted.")
     }
     return response.json()
