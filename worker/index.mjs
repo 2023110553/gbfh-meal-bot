@@ -1,39 +1,82 @@
 import { DurableObject } from 'cloudflare:workers'
 import { plan, notification, scheduledMeal } from '../meal-core.mjs'
 
+function safeError(error, env) {
+  let message = String(error?.message ?? 'Unknown failure')
+  for (const secret of [env.NTFY_TOPIC, env.ADMIN_TOKEN]) {
+    if (secret) message = message.split(secret).join('[redacted]')
+  }
+  return message.slice(0, 500)
+}
+function failure(error, env, stage, traceId, status = 500, httpStatus) {
+  const result = { status: 'error', stage, traceId, message: safeError(error, env) }
+  if (httpStatus) result.upstreamStatus = httpStatus
+  console.error(JSON.stringify(result))
+  return Response.json(result, { status })
+}
+
 export class Sender extends DurableObject {
   async fetch(request) {
     return this.ctx.blockConcurrencyWhile(async () => {
-      const { meal, scheduled, manual, dryRun } = await request.json()
-      const item = plan(meal, scheduled, Date.now(), manual)
-      if (item.status !== 'ready') return Response.json(item)
-      const previous = await this.ctx.storage.get(item.key)
-      if (previous && !dryRun) return Response.json({ status: 'duplicate', record: previous })
-      const response = await fetch(this.env.MEALS_URL, { cache: 'no-store', signal: AbortSignal.timeout(10000) })
-      if (!response.ok) throw Error(`GitHub HTTP ${response.status}`)
-      const data = await response.json()
-      const message = notification(data, item.date, meal)
-      if (!message) {
-        console.error(JSON.stringify({ status: 'missing-menu', date: item.date, meal, latest: Object.keys(data).sort().at(-1) }))
-        return Response.json({ status: 'missing-menu' }, { status: 409 })
-      }
-      if (dryRun) return Response.json({ status: 'preview', ...message })
-      if (!/^[A-Za-z0-9_-]{16,64}$/.test(this.env.NTFY_TOPIC ?? '')) throw Error('Missing NTFY_TOPIC')
-      // Persist before delivery. Ambiguous network failures stay blocked to avoid duplicate pushes.
-      await this.ctx.storage.put(item.key, { status: 'attempting', at: new Date().toISOString() })
+      const traceId = crypto.randomUUID()
+      let stage = 'request'
       try {
-        const sent = await fetch('https://ntfy.sh', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ topic: this.env.NTFY_TOPIC, ...message }),
-          signal: AbortSignal.timeout(10000),
-        })
-        if (!sent.ok) throw Error(`ntfy HTTP ${sent.status}`)
-        await this.ctx.storage.put(item.key, { status: 'accepted', at: new Date().toISOString() })
+        const { meal, scheduled, manual, dryRun, inspect } = await request.json()
+        const item = plan(meal, scheduled, Date.now(), manual)
+        if (item.status !== 'ready') return Response.json(item)
+        stage = 'storage-read'
+        const previous = await this.ctx.storage.get(item.key)
+        if (inspect) {
+          return Response.json({ status: 'record', date: item.date, meal, record: previous ? {
+            status: previous.status, at: previous.at, upstreamStatus: previous.upstreamStatus,
+            stage: previous.stage, traceId: previous.traceId,
+            error: previous.error ? safeError(new Error(previous.error), this.env) : undefined,
+          } : null })
+        }
+        if (previous && !dryRun) return Response.json({ status: 'duplicate', record: {
+          status: previous.status, at: previous.at, upstreamStatus: previous.upstreamStatus,
+          stage: previous.stage, traceId: previous.traceId,
+        } })
+        stage = 'github-fetch'
+        const response = await fetch(this.env.MEALS_URL, { cache: 'no-store', signal: AbortSignal.timeout(10000) })
+        if (!response.ok) return failure(new Error('GitHub request rejected'), this.env, stage, traceId, 502, response.status)
+        stage = 'github-json'
+        const data = await response.json()
+        const message = notification(data, item.date, meal)
+        if (!message) {
+          console.error(JSON.stringify({ status: 'missing-menu', date: item.date, meal, latest: Object.keys(data).sort().at(-1), traceId }))
+          return Response.json({ status: 'missing-menu', traceId }, { status: 409 })
+        }
+        if (dryRun) return Response.json({ status: 'preview', ...message })
+        stage = 'ntfy-config'
+        if (!/^[A-Za-z0-9_-]{16,64}$/.test(this.env.NTFY_TOPIC ?? '')) throw Error('NTFY_TOPIC missing or invalid; verify the existing topic Secret')
+        stage = 'storage-attempt'
+        await this.ctx.storage.put(item.key, { status: 'attempting', at: new Date().toISOString(), traceId })
+        stage = 'ntfy-fetch'
+        let sent
+        try {
+          sent = await fetch('https://ntfy.sh', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic: this.env.NTFY_TOPIC, ...message }),
+            signal: AbortSignal.timeout(10000),
+          })
+        } catch (error) {
+          stage = 'storage-uncertain'
+          await this.ctx.storage.put(item.key, { status: 'uncertain', at: new Date().toISOString(), stage: 'ntfy-fetch', error: safeError(error, this.env), traceId })
+          return failure(error, this.env, 'ntfy-fetch', traceId, 502)
+        }
+        if (!sent.ok) {
+          stage = 'storage-rejected'
+          await this.ctx.storage.put(item.key, { status: 'rejected', at: new Date().toISOString(), stage: 'ntfy-http', upstreamStatus: sent.status, traceId })
+          return failure(new Error('ntfy request rejected'), this.env, 'ntfy-http', traceId, 502, sent.status)
+        }
+        stage = 'storage-accepted'
+        await this.ctx.storage.put(item.key, { status: 'accepted', at: new Date().toISOString(), traceId })
+        console.log(JSON.stringify({ status: 'accepted', date: item.date, meal, traceId }))
+        return Response.json({ status: 'accepted', date: item.date, meal, traceId })
       } catch (error) {
-        await this.ctx.storage.put(item.key, { status: 'uncertain', at: new Date().toISOString(), error: error.message })
-        throw error
+        return failure(error, this.env, stage, traceId)
       }
-      return Response.json({ status: 'accepted', date: item.date, meal })
     })
   }
 }
@@ -43,18 +86,24 @@ export default {
     if (!meal) { console.log('Skipped non-matching meal time'); return }
     const response = await invoke(env, { meal, scheduled: event.scheduledTime })
     console.log(await response.text())
-    if (!response.ok) throw Error('Scheduled delivery failed')
+    if (!response.ok) throw Error('Scheduled delivery failed; inspect the preceding stage and traceId')
   },
   async fetch(request, env) {
     if (!env.ADMIN_TOKEN || request.headers.get('Authorization') !== `Bearer ${env.ADMIN_TOKEN}`) {
       return new Response('Unauthorized', { status: 401 })
     }
     if (request.method !== 'POST') return new Response('POST required', { status: 405 })
-    const body = await request.json()
-    return invoke(env, { meal: body.meal, scheduled: Date.now(), manual: true, dryRun: body.dryRun !== false })
+    let body
+    try { body = await request.json() } catch { return Response.json({ status: 'invalid-json' }, { status: 400 }) }
+    if (!['breakfast', 'lunch', 'dinner'].includes(body.meal)) return Response.json({ status: 'invalid-meal' }, { status: 400 })
+    return invoke(env, { meal: body.meal, scheduled: Date.now(), manual: true, dryRun: body.dryRun !== false, inspect: body.inspect === true })
   },
 }
-function invoke(env, body) {
-  const stub = env.SENDER.get(env.SENDER.idFromName('meal-sender'))
-  return stub.fetch('https://sender.internal', { method: 'POST', body: JSON.stringify(body) })
+async function invoke(env, body) {
+  try {
+    const stub = env.SENDER.get(env.SENDER.idFromName('meal-sender'))
+    return await stub.fetch('https://sender.internal', { method: 'POST', body: JSON.stringify(body) })
+  } catch (error) {
+    return failure(error, env, 'durable-object-rpc', crypto.randomUUID())
+  }
 }
