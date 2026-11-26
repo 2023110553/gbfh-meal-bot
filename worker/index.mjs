@@ -8,8 +8,8 @@ function safeError(error, env) {
   }
   return message.slice(0, 500)
 }
-function failure(error, env, stage, traceId, status = 500, httpStatus) {
-  const result = { status: 'error', stage, traceId, message: safeError(error, env) }
+function failure(error, env, stage, traceId, status = 500, httpStatus, details = {}) {
+  const result = { status: 'error', stage, traceId, message: safeError(error, env), ...details }
   if (httpStatus) result.upstreamStatus = httpStatus
   console.error(JSON.stringify(result))
   return Response.json(result, { status })
@@ -20,7 +20,7 @@ export class Sender extends DurableObject {
       const traceId = crypto.randomUUID()
       let stage = 'request'
       try {
-        const { meal, scheduled, manual, dryRun, inspect, probe } = await request.json()
+        const { meal, scheduled, manual, dryRun, inspect, probe, retryRejected } = await request.json()
         const item = plan(meal, scheduled, Date.now(), manual)
         if (item.status !== 'ready') return Response.json(item)
         if (probe) item.key = 'probe/' + item.key
@@ -29,13 +29,14 @@ export class Sender extends DurableObject {
         if (inspect) {
           return Response.json({ status: 'record', date: item.date, meal, record: previous ? {
             status: previous.status, at: previous.at, upstreamStatus: previous.upstreamStatus,
-            stage: previous.stage, traceId: previous.traceId,
+            stage: previous.stage, traceId: previous.traceId, retryAt: previous.retryAt, rateLimit: previous.rateLimit, ntfyCode: previous.ntfyCode, attempts: previous.attempts,
             error: previous.error ? safeError(new Error(previous.error), this.env) : undefined,
           } : null })
         }
-        if (previous && !dryRun) return Response.json({ status: 'duplicate', record: {
+        const canRetry = record => manual && probe && retryRejected && record?.status === 'rejected' && record.upstreamStatus === 429 && Date.now() >= (record.retryAt ?? Date.parse(record.at) + 300000) && (record.attempts ?? 1) < 3
+        if (previous && !dryRun && !canRetry(previous)) return Response.json({ status: 'duplicate', record: {
           status: previous.status, at: previous.at, upstreamStatus: previous.upstreamStatus,
-          stage: previous.stage, traceId: previous.traceId,
+          stage: previous.stage, traceId: previous.traceId, retryAt: previous.retryAt, rateLimit: previous.rateLimit, ntfyCode: previous.ntfyCode, attempts: previous.attempts,
         } })
         stage = 'github-fetch'
         const response = await fetch(this.env.MEALS_URL, { cache: 'no-store', signal: AbortSignal.timeout(10000) })
@@ -54,8 +55,8 @@ export class Sender extends DurableObject {
         stage = 'storage-attempt'
         const reserved = await this.ctx.storage.transaction(async transaction => {
           const current = await transaction.get(item.key)
-          if (current) return current
-          await transaction.put(item.key, { status: 'attempting', at: new Date().toISOString(), traceId })
+          if (current && !canRetry(current)) return current
+          await transaction.put(item.key, { status: 'attempting', at: new Date().toISOString(), traceId, attempts: (current ? (current.attempts ?? 1) : 0) + 1, previous: current ?? null })
           return null
         })
         if (reserved) return Response.json({ status: 'duplicate', record: { status: reserved.status, at: reserved.at } })
@@ -69,16 +70,25 @@ export class Sender extends DurableObject {
           })
         } catch (error) {
           stage = 'storage-uncertain'
-          await this.ctx.storage.put(item.key, { status: 'uncertain', at: new Date().toISOString(), stage: 'ntfy-fetch', error: safeError(error, this.env), traceId })
+          await this.ctx.storage.put(item.key, { ...(await this.ctx.storage.get(item.key)), status: 'uncertain', at: new Date().toISOString(), stage: 'ntfy-fetch', error: safeError(error, this.env), traceId })
           return failure(error, this.env, 'ntfy-fetch', traceId, 502)
         }
         if (!sent.ok) {
           stage = 'storage-rejected'
-          await this.ctx.storage.put(item.key, { status: 'rejected', at: new Date().toISOString(), stage: 'ntfy-http', upstreamStatus: sent.status, traceId })
-          return failure(new Error('ntfy request rejected'), this.env, 'ntfy-http', traceId, 502, sent.status)
+          const errorBody = await sent.json().catch(() => ({}))
+          const retryHeader = sent.headers.get('Retry-After')
+          const delay = retryHeader && /^\d+$/.test(retryHeader) ? Number(retryHeader) * 1000 : 300000
+          const retryAt = retryHeader && !/^\d+$/.test(retryHeader) && Number.isFinite(Date.parse(retryHeader)) ? Date.parse(retryHeader) : Date.now() + delay
+          const details = {
+            ntfyCode: Number.isFinite(errorBody.code) ? errorBody.code : undefined,
+            retryAt, rateLimit: sent.headers.get('RateLimit') ?? undefined,
+          }
+          const attempt = await this.ctx.storage.get(item.key)
+          await this.ctx.storage.put(item.key, { ...attempt, status: 'rejected', at: new Date().toISOString(), stage: 'ntfy-http', upstreamStatus: sent.status, traceId, ...details })
+          return failure(new Error('ntfy request rejected'), this.env, 'ntfy-http', traceId, 502, sent.status, details)
         }
         stage = 'storage-accepted'
-        await this.ctx.storage.put(item.key, { status: 'accepted', at: new Date().toISOString(), traceId })
+        await this.ctx.storage.put(item.key, { ...(await this.ctx.storage.get(item.key)), status: 'accepted', at: new Date().toISOString(), traceId })
         console.log(JSON.stringify({ status: 'accepted', date: item.date, meal, traceId }))
         return Response.json({ status: 'accepted', date: item.date, meal, traceId })
       } catch (error) {
@@ -102,7 +112,7 @@ export default {
     let body
     try { body = await request.json() } catch { return Response.json({ status: 'invalid-json' }, { status: 400 }) }
     if (!['breakfast', 'lunch', 'dinner'].includes(body.meal)) return Response.json({ status: 'invalid-meal' }, { status: 400 })
-    return invoke(env, { meal: body.meal, scheduled: Date.now(), manual: true, dryRun: body.dryRun !== false, inspect: body.inspect === true, probe: body.probe === true })
+    return invoke(env, { meal: body.meal, scheduled: Date.now(), manual: true, dryRun: body.dryRun !== false, inspect: body.inspect === true, probe: body.probe === true, retryRejected: body.retryRejected === true })
   },
 }
 async function invoke(env, body) {
