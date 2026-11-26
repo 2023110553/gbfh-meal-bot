@@ -12,7 +12,7 @@ test('durable ledger, dry run, missing data, network and uncertain delivery', as
   const records = new Map()
   const ctx = {
     blockConcurrencyWhile: fn => fn(),
-    storage: { get: async k => records.get(k), put: async (k,v) => records.set(k,v) },
+    storage: { get: async k => records.get(k), put: async (k,v) => { if (mode === 'storage-error') throw Error('Simulated storage failure'); records.set(k,v) } },
   }
   const sender = new Sender(ctx, { MEALS_URL: 'https://example.org/meals.json', NTFY_TOPIC: 'test-topic-123456789' })
   const date = core.kstDate(Date.now())
@@ -43,13 +43,32 @@ test('durable ledger, dry run, missing data, network and uncertain delivery', as
     assert.equal((await run(false)).status,409)
     assert.equal(delivered,1)
     mode='github-error'
-    await assert.rejects(run(false),/GitHub HTTP 503/)
+    const githubError = await run(false)
+    assert.equal(githubError.status, 502)
+    assert.equal((await githubError.json()).stage, 'github-fetch')
     assert.equal(records.size,0)
     menu={ [date]: { dinner:['밥'] } }; mode='ntfy-error'
-    await assert.rejects(run(false),/ntfy HTTP 429/)
-    assert.equal([...records.values()][0].status,'uncertain')
+    const ntfyError = await run(false)
+    assert.equal(ntfyError.status, 502)
+    const detail = await ntfyError.json()
+    assert.equal(detail.stage, 'ntfy-http')
+    assert.equal(detail.upstreamStatus, 429)
+    assert.equal([...records.values()][0].status,'rejected')
     records.clear(); mode='timeout'
-    await assert.rejects(run(false),/timeout/)
+    assert.equal((await run(false)).status, 502)
+    assert.equal([...records.values()][0].status, 'uncertain')
     assert.equal((await (await run(false)).json()).status,'duplicate')
+    const snapshot = JSON.stringify([...records])
+    const inspection = await sender.fetch(new Request('https://test', {
+      method:'POST', body:JSON.stringify({meal:'dinner', scheduled:Date.now(), manual:true, inspect:true}),
+    }))
+    assert.equal((await inspection.json()).record.status, 'uncertain')
+    assert.equal(JSON.stringify([...records]), snapshot)
+    records.clear(); mode='storage-error'
+    const before = delivered
+    const storageError = await run(false)
+    assert.equal(storageError.status, 500)
+    assert.equal((await storageError.json()).stage, 'storage-attempt')
+    assert.equal(delivered, before)
   } finally { globalThis.fetch=original; delete globalThis.__mealCore }
 })
