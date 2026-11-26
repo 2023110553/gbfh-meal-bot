@@ -17,13 +17,13 @@ function failure(error, env, stage, traceId, status = 500, httpStatus) {
 
 export class Sender extends DurableObject {
   async fetch(request) {
-    return this.ctx.blockConcurrencyWhile(async () => {
       const traceId = crypto.randomUUID()
       let stage = 'request'
       try {
-        const { meal, scheduled, manual, dryRun, inspect } = await request.json()
+        const { meal, scheduled, manual, dryRun, inspect, probe } = await request.json()
         const item = plan(meal, scheduled, Date.now(), manual)
         if (item.status !== 'ready') return Response.json(item)
+        if (probe) item.key = 'probe/' + item.key
         stage = 'storage-read'
         const previous = await this.ctx.storage.get(item.key)
         if (inspect) {
@@ -48,10 +48,17 @@ export class Sender extends DurableObject {
           return Response.json({ status: 'missing-menu', traceId }, { status: 409 })
         }
         if (dryRun) return Response.json({ status: 'preview', ...message })
+        if (!manual && plan(meal, scheduled, Date.now()).status !== 'ready') return Response.json({ status: 'late', date: item.date, meal })
         stage = 'ntfy-config'
         if (!/^[A-Za-z0-9_-]{16,64}$/.test(this.env.NTFY_TOPIC ?? '')) throw Error('NTFY_TOPIC missing or invalid; verify the existing topic Secret')
         stage = 'storage-attempt'
-        await this.ctx.storage.put(item.key, { status: 'attempting', at: new Date().toISOString(), traceId })
+        const reserved = await this.ctx.storage.transaction(async transaction => {
+          const current = await transaction.get(item.key)
+          if (current) return current
+          await transaction.put(item.key, { status: 'attempting', at: new Date().toISOString(), traceId })
+          return null
+        })
+        if (reserved) return Response.json({ status: 'duplicate', record: { status: reserved.status, at: reserved.at } })
         stage = 'ntfy-fetch'
         let sent
         try {
@@ -77,7 +84,6 @@ export class Sender extends DurableObject {
       } catch (error) {
         return failure(error, this.env, stage, traceId)
       }
-    })
   }
 }
 export default {
@@ -96,7 +102,7 @@ export default {
     let body
     try { body = await request.json() } catch { return Response.json({ status: 'invalid-json' }, { status: 400 }) }
     if (!['breakfast', 'lunch', 'dinner'].includes(body.meal)) return Response.json({ status: 'invalid-meal' }, { status: 400 })
-    return invoke(env, { meal: body.meal, scheduled: Date.now(), manual: true, dryRun: body.dryRun !== false, inspect: body.inspect === true })
+    return invoke(env, { meal: body.meal, scheduled: Date.now(), manual: true, dryRun: body.dryRun !== false, inspect: body.inspect === true, probe: body.probe === true })
   },
 }
 async function invoke(env, body) {
