@@ -5,7 +5,11 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "deploy:worker": "wrangler deploy",
-    "logs:worker": "wrangler tail"
+    "logs:worker": "wrangler tail",
+    "build:holidays": "node scripts/build-holidays.mjs"
   },
-  "devDependencies": { "wrangler": "4.167.0" }
+  "devDependencies": {
+    "date-holidays": "3.39.2",
+    "wrangler": "4.167.0"
+  }
 }
