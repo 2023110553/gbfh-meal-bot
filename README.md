@@ -2,7 +2,7 @@
 
 Windows PC가 식단을 수집해 GitHub JSON을 갱신하고 ntfy로 Android·iOS에 메뉴를 알립니다. PC가 꺼져 있어도 저장된 날짜의 메뉴를 보낼 수 있습니다.
 
-GitHub Actions 예약은 유지됩니다. 15분 이상 늦은 작업은 건너뜁니다. Cloudflare 전환용 코드를 추가했으며 계정 배포와 수신 검증 후 예약을 전환합니다.
+식사 시작 1시간 전 알림과 공휴일 처리를 추가했습니다. 실제 배포·수신 확인 후 Cloudflare 예약 설정으로 전환합니다. 최신 절차는 STABILIZATION.md를 따릅니다.
 
 [설치 및 운영](PUSH-NOTIFICATIONS.md) · [조사 및 검증 결과](STABILIZATION.md)
 
