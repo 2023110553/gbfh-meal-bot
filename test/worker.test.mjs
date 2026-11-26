@@ -10,9 +10,10 @@ test('durable ledger, dry run, missing data, network and uncertain delivery', as
   globalThis.__mealCore = core
   const { Sender } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))
   const records = new Map()
+  let transactionTail = Promise.resolve()
   const ctx = {
     blockConcurrencyWhile: fn => fn(),
-    storage: { get: async k => records.get(k), put: async (k,v) => { if (mode === 'storage-error') throw Error('Simulated storage failure'); records.set(k,v) } },
+    storage: { transaction: fn => { const operation = transactionTail.then(() => fn(ctx.storage)); transactionTail = operation.catch(() => {}); return operation }, get: async k => records.get(k), put: async (k,v) => { if (mode === 'storage-error') throw Error('Simulated storage failure'); records.set(k,v) } },
   }
   const sender = new Sender(ctx, { MEALS_URL: 'https://example.org/meals.json', NTFY_TOPIC: 'test-topic-123456789' })
   const date = core.kstDate(Date.now())
@@ -64,6 +65,12 @@ test('durable ledger, dry run, missing data, network and uncertain delivery', as
     }))
     assert.equal((await inspection.json()).record.status, 'uncertain')
     assert.equal(JSON.stringify([...records]), snapshot)
+    records.clear(); mode='ok'
+    const beforeConcurrent = delivered
+    const concurrent = await Promise.all(Array.from({length:10}, () => run(false).then(r=>r.json())))
+    assert.equal(concurrent.filter(x=>x.status==='accepted').length, 1)
+    assert.equal(concurrent.filter(x=>x.status==='duplicate').length, 9)
+    assert.equal(delivered, beforeConcurrent + 1)
     records.clear(); mode='storage-error'
     const before = delivered
     const storageError = await run(false)
