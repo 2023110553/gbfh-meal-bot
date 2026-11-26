@@ -6,7 +6,8 @@
     "test": "node --test test/*.test.mjs",
     "deploy:worker": "wrangler deploy",
     "logs:worker": "wrangler tail",
-    "build:holidays": "node scripts/build-holidays.mjs"
+    "build:holidays": "node scripts/build-holidays.mjs",
+    "test:runtime": "node --test test/runtime-check.mjs"
   },
   "devDependencies": {
     "date-holidays": "3.39.2",
