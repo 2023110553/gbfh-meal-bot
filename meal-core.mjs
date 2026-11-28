@@ -22,7 +22,10 @@ export function plan(meal, scheduled, now, manual = false) {
   const date = kstDate(scheduled)
   if (manual) return { status: 'ready', date, meal, key: `${date}/${meal}` }
   const target = Date.parse(`${date}T${mealTime(date, meal)}:00+09:00`)
-  if (scheduled !== target || now < target || now - target >= 15 * 60000) return { status: 'late', date, meal }
+  // Cron timestamps may include seconds. Match the scheduled minute, while
+  // measuring the 15-minute deadline from the configured meal time.
+  const scheduledMinute = Math.floor(scheduled / 60000) * 60000
+  if (scheduledMinute !== target || now < target || now - target >= 15 * 60000) return { status: 'late', date, meal }
   return { status: 'ready', date, meal, key: `${date}/${meal}` }
 }
 export function notification(data, date, meal) {
