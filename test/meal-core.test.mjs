@@ -39,3 +39,30 @@ test('missing menu and origin removal', () => {
   assert.equal(result.message, '밥')
   assert.equal(result.priority, 4)
 })
+
+test('production scheduled timestamps include seconds', () => {
+  const events = [
+    ['breakfast', 1795813202000, '2026-11-28T06:00:03.096+09:00'],
+    ['lunch', 1795831250000, '2026-11-28T11:00:51.399+09:00'],
+    ['dinner', 1795766450000, '2026-11-27T17:00:51.565+09:00'],
+  ]
+  for (const [meal, scheduled, actual] of events) {
+    const now = Date.parse(actual)
+    assert.equal(scheduledMeal(scheduled), meal)
+    assert.equal(plan(meal, scheduled, now).status, 'ready')
+    const target = Math.floor(scheduled / 60000) * 60000
+    assert.equal(plan(meal, scheduled, target + 899999).status, 'ready')
+    assert.equal(plan(meal, scheduled, target + 900000).status, 'late')
+    assert.equal(plan(meal, scheduled, target - 1).status, 'late')
+    assert.equal(plan(meal, scheduled, target + 86400000).status, 'late')
+  }
+})
+test('wrong minute and weekend candidate remain blocked', () => {
+  const target = Date.parse('2026-11-28T11:00:00+09:00')
+  for (const offset of [-1, 60000, 14 * 60000]) {
+    assert.equal(plan('lunch', target + offset, target + 14 * 60000).status, 'late')
+  }
+  const weekdaySlot = Date.parse('2026-11-28T10:30:40+09:00')
+  assert.equal(scheduledMeal(weekdaySlot), undefined)
+  assert.equal(plan('lunch', weekdaySlot, weekdaySlot).status, 'late')
+})
